@@ -69,7 +69,7 @@ dotnet publish --configuration Release --output ./publish --self-contained true 
 ```
 
 ### Option 2: Download Pre-built
-Download the latest release from the [Releases](https://github.com/MidasRX/Binder/releases) page.
+Download the latest release from the [Releases](https://github.com/MidasRX/Binder/releases/tag/Binder) page.
 
 ## 🎯 Usage Guide
 
